@@ -1,6 +1,6 @@
 app-id: com.github.yafti.gtk
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '48'
 sdk: org.gnome.Sdk
 command: yafti_gtk.py
 
@@ -40,6 +40,11 @@ modules:
       - install -D yafti.yml ${FLATPAK_DEST}/share/yafti-gtk/yafti.yml
       - install -D com.github.yafti.gtk.desktop ${FLATPAK_DEST}/share/applications/com.github.yafti.gtk.desktop
       - install -D portal.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.github.yafti.gtk.svg
+      - |
+        mkdir -p ${FLATPAK_DEST}/lib/girepository-1.0 || true
+        if [ -d ${FLATPAK_DEST}/lib64/girepository-1.0 ]; then
+          cp -a ${FLATPAK_DEST}/lib64/girepository-1.0/* ${FLATPAK_DEST}/lib/girepository-1.0/ || true
+        fi
     sources:
       - type: file
         path: yafti_gtk.py

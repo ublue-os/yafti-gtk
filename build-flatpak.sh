@@ -17,7 +17,7 @@ fi
 
 # Install runtime and SDK
 echo "Installing GNOME runtime and SDK..."
-flatpak install -y --user flathub org.gnome.Platform//47 org.gnome.Sdk//47 2>/dev/null || true
+flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48 2>/dev/null || true
 
 # Build the flatpak
 echo "Building flatpak package..."

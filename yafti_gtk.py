@@ -195,12 +195,18 @@ class YaftiGTK(Gtk.Window):
         # Show dialog
         dialog.show_all()
         
-        # Spawn the script in the terminal
+        # Spawn the script in the terminal. When running inside a Flatpak sandbox
+        # prefer `flatpak-spawn --host` so `ujust` and other host tools run on the host.
         try:
+            if os.environ.get('FLATPAK_ID'):
+                cmd = ['/usr/bin/flatpak-spawn', '--host', '/bin/bash', '-c', script]
+            else:
+                cmd = ['/bin/bash', '-c', script]
+
             terminal.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 os.getcwd(),
-                ['/bin/bash', '-c', script],
+                cmd,
                 None,
                 GLib.SpawnFlags.DEFAULT,
                 None,
