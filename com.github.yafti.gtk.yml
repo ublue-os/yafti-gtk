@@ -1,5 +1,5 @@
 app-id: com.github.yafti.gtk
-app-version: "0.1.0"
+app-version: "0.1.1"
 runtime: org.gnome.Platform
 runtime-version: '48'
 sdk: org.gnome.Sdk
