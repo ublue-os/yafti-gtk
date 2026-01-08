@@ -1,9 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "Building Yafti GTK Flatpak (local)..."
+echo "Building Yafti GTK Flatpak..."
 
-# Minimal local build script. CI uses the maintained GitHub Action.
 if ! command -v flatpak >/dev/null 2>&1; then
     echo "Error: 'flatpak' not found. Install Flatpak to build locally." >&2
     exit 1

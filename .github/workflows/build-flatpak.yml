@@ -50,11 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           MANIFEST=com.github.yafti.gtk.yml
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BEFORE="${{ github.event.pull_request.base.sha }}"
-          else
-            BEFORE="${{ github.event.before }}"
-          fi
+          BEFORE="${{ github.event.before }}"
 
           if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -66,23 +62,34 @@ jobs:
             exit 0
           fi
 
-          git show "$BEFORE:${MANIFEST}" > old_manifest.yml || true
+          # Extract version from manifest (key: value)
+          new_version=$(sed -n -E 's/^[[:space:]]*(version|app-version):[[:space:]]*"?([^\"]+)"?.*/\2/p' com.github.yafti.gtk.yml | head -n1)
 
-          extract_version() {
-            awk '/^(version|app-version):/ { for (i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":"\n") }' "$1" \
-              | sed -E 's/^\s+//; s/"//g; s/\r$//' | head -n1
-          }
-
-          new_version=$(extract_version com.github.yafti.gtk.yml || true)
-          prev_version=$(extract_version old_manifest.yml || true)
-
-          if [ -z "$new_version" ] || [ "$new_version" = "$prev_version" ]; then
+          if [ -z "$new_version" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
-          echo "changed=true" >> "$GITHUB_OUTPUT"
+          # Compare against latest tag (assume tags like v1.2.3)
+          git fetch --tags origin || true
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          latest_version="${latest_tag#v}"
+
+          if [ -z "$latest_version" ]; then
+            echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # If new_version > latest_version then release, otherwise skip
+          highest=$(printf '%s\n' "$latest_version" "$new_version" | sort -V | tail -n1)
+          if [ "$highest" = "$new_version" ] && [ "$new_version" != "$latest_version" ]; then
+            echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
       - name: Download bundle artifact
         if: needs.build.result == 'success' && steps.version_check.outputs.new_version != ''
@@ -98,15 +105,20 @@ jobs:
           VERSION="${{ steps.version_check.outputs.new_version }}"
           echo "Preparing release v${VERSION} and uploading yafti-gtk.flatpak"
 
-          if [ ! -f yafti-gtk.flatpak ]; then
-            echo "Artifact yafti-gtk.flatpak not found; skipping release" >&2
-            exit 1
-          fi
+          # Create and push a git tag matching the manifest version, then create the release
 
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "Release v${VERSION} already exists — uploading/updating asset"
             gh release upload "v${VERSION}" yafti-gtk.flatpak --clobber || true
           else
+            # create tag if it doesn't exist locally or remotely
+            if ! git rev-parse "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a "v${VERSION}" -m "v${VERSION}"
+              git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" "v${VERSION}"
+            fi
+
             echo "Creating release v${VERSION} and uploading yafti-gtk.flatpak"
             gh release create "v${VERSION}" yafti-gtk.flatpak --title "v${VERSION}" --generate-notes --target "${{ github.sha }}"
           fi
