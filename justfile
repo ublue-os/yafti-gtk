@@ -2,7 +2,6 @@
 
 container := "flatpak-builder"
 
-# Build and install the flatpak
 build:
     @distrobox list | grep -q "{{container}}" || just setup
     -distrobox enter {{container}} -- bash -c 'rm -rf .flatpak-builder' || sudo rm -rf .flatpak-builder
@@ -12,6 +11,9 @@ build:
 install:
     @test -f output/yafti-gtk.flatpak || (echo "✗ output/yafti-gtk.flatpak not found - run 'just build' first" && exit 1)
     flatpak install --user -y output/yafti-gtk.flatpak
+
+run:
+    flatpak run com.github.yafti.gtk /run/host/usr/share/yafti/yafti.yml
 
 # Set up distrobox container with dependencies
 setup:
