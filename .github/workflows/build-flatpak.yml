@@ -45,23 +45,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check manifest changed and extract version
+      - name: Extract version and check against tags
         id: version_check
         run: |
           set -euo pipefail
-          MANIFEST=com.github.yafti.gtk.yml
-          BEFORE="${{ github.event.before }}"
-
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! git diff --name-only "$BEFORE" "${{ github.sha }}" | grep -q "^${MANIFEST}$"; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
+          
           # Extract version from manifest (key: value)
           new_version=$(sed -n -E 's/^[[:space:]]*(version|app-version):[[:space:]]*"?([^\"]+)"?.*/\2/p' com.github.yafti.gtk.yml | head -n1)
 
