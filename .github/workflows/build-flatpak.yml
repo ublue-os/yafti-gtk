@@ -26,14 +26,9 @@ jobs:
       - name: Run build script (with fallback)
         run: |
           chmod +x build-flatpak.sh || true
-          set -o pipefail
+          set -euo pipefail
           if bash build-flatpak.sh 2>&1 | tee build.log; then
             echo "Build script succeeded"
-          else
-            echo "Initial build failed; retrying with --disable-rofiles-fuse"
-            flatpak-builder --disable-rofiles-fuse --user --force-clean build-dir com.github.yafti.gtk.yml --repo=repo
-            mkdir -p output
-            flatpak build-bundle repo output/yafti-gtk.flatpak com.github.yafti.gtk
           fi
 
       - name: Upload Flatpak artifact

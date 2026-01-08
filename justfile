@@ -15,6 +15,10 @@ install:
     @test -f output/yafti-gtk.flatpak || (echo "✗ output/yafti-gtk.flatpak not found - run 'just build' first" && exit 1)
     flatpak install --user -y output/yafti-gtk.flatpak
 
+# Uninstall the flatpak
+uninstall:
+    flatpak uninstall --user -y com.github.yafti.gtk || true
+
 # Run yafti-gtk from the installed flatpak with default config
 run yml="/run/host/usr/share/yafti/yafti.yml":
     flatpak run com.github.yafti.gtk {{yml}}
