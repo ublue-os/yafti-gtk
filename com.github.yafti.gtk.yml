@@ -10,7 +10,9 @@ finish-args:
   - --share=ipc
   - --device=dri
   - --filesystem=home
+  - --filesystem=host:ro
   - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.portal.Desktop
 
 modules:
   - name: vte
@@ -37,7 +39,6 @@ modules:
     buildsystem: simple
     build-commands:
       - install -D yafti_gtk.py ${FLATPAK_DEST}/bin/yafti_gtk.py
-      - install -D yafti.yml ${FLATPAK_DEST}/share/yafti-gtk/yafti.yml
       - install -D com.github.yafti.gtk.desktop ${FLATPAK_DEST}/share/applications/com.github.yafti.gtk.desktop
       - install -D portal.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.github.yafti.gtk.svg
       - |
@@ -48,8 +49,6 @@ modules:
     sources:
       - type: file
         path: yafti_gtk.py
-      - type: file
-        path: yafti.yml
       - type: file
         path: com.github.yafti.gtk.desktop
       - type: file

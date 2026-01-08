@@ -1,17 +1,5 @@
-# Flatpak build artifacts
+output/
+yafti-gtk.flatpak
 .flatpak-builder/
 build-dir/
 repo/
-yafti-gtk.flatpak
-
-# Python artifacts
-__pycache__/
-*.py[cod]
-
-# Caches
-.cache/
-
-# Editor/IDE files
-.vscode/
-.idea/
-*.swp

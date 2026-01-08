@@ -1,0 +1,13 @@
+{
+  "name": "Bazzite Portal Flatpak Builder",
+  "image": "fedora:latest",
+  "runArgs": ["--privileged"],
+
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "upgradePackages": true
+    }
+  },
+  
+  "postCreateCommand": "sudo dnf install -y flatpak flatpak-builder && flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak install -y --user org.gnome.Platform//48 org.gnome.Sdk//48 && chmod +x build-flatpak.sh && ./build-flatpak.sh && echo 'Flatpak exported to output/yafti-gtk.flatpak'"
+}
