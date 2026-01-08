@@ -1,42 +1,20 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "Building Yafti GTK Flatpak..."
 
-# Check for flatpak-builder from Flathub
-if ! flatpak list --user | grep -q org.flatpak.Builder; then
-    echo "Error: org.flatpak.Builder not found. Installing from Flathub..."
-    flatpak install --user -y flathub org.flatpak.Builder || exit 1
+if ! command -v flatpak >/dev/null 2>&1; then
+    echo "Error: 'flatpak' not found. Install Flatpak to build locally." >&2
+    exit 1
 fi
 
-# Add Flathub repo if not present
-if ! flatpak remote-list --user | grep -q flathub; then
-    echo "Adding Flathub repository..."
-    flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
-fi
+mkdir -p repo build-dir
 
-# Install runtime and SDK
-echo "Installing GNOME runtime and SDK..."
-if ! flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48; then
-    echo "Warning: Failed to install runtimes. They may already be installed."
-    echo "Continuing with build..."
-fi
-
-# Build the flatpak
-echo "Building flatpak package..."
+echo "Running flatpak-builder..."
 flatpak run org.flatpak.Builder --disable-rofiles-fuse --user --force-clean build-dir com.github.yafti.gtk.yml --repo=repo
 
-# Export the flatpak bundle
-echo "Exporting flatpak bundle..."
-mkdir -p output
-flatpak build-bundle repo output/yafti-gtk.flatpak com.github.yafti.gtk
+echo "Exporting bundle..."
+flatpak build-bundle repo yafti-gtk.flatpak com.github.yafti.gtk
 
-echo ""
-echo "✓ Build complete!"
-echo "✓ Flatpak bundle exported: output/yafti-gtk.flatpak"
-echo ""
-echo "To test the app:"
-echo "  flatpak run com.github.yafti.gtk"
-echo ""
-echo "To install the bundle on another system:"
-echo "  flatpak install yafti-gtk.flatpak"
+printf "\n✓ Build complete — yafti-gtk.flatpak created in repo root.\n"
+echo "To install locally:  flatpak install --user -y yafti-gtk.flatpak"

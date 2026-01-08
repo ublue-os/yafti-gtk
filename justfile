@@ -4,12 +4,12 @@ _default:
 # Build the flatpak using flatpak-builder from Flathub
 build:
     ./build-flatpak.sh
-    @test -f output/yafti-gtk.flatpak && echo "✓ Flatpak built successfully" || (echo "✗ Build failed - flatpak not found" && exit 1)
+    @test -f yafti-gtk.flatpak && echo "✓ Flatpak built successfully" || (echo "✗ Build failed - flatpak not found" && exit 1)
 
 # Install the built flatpak
 install:
-    @test -f output/yafti-gtk.flatpak || (echo "✗ output/yafti-gtk.flatpak not found - run 'just build' first" && exit 1)
-    flatpak install --user -y output/yafti-gtk.flatpak
+    @test -f yafti-gtk.flatpak || (echo "✗ yafti-gtk.flatpak not found - run 'just build' first" && exit 1)
+    flatpak install --user -y yafti-gtk.flatpak
 
 # Uninstall the flatpak
 uninstall:
@@ -26,4 +26,5 @@ setup:
 
 # Clean build artifacts
 clean:
-    rm -rf .flatpak-builder build-dir output repo
+    rm -rf .flatpak-builder build-dir repo
+    rm -f yafti-gtk.flatpak
