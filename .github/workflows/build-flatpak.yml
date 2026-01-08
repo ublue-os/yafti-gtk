@@ -20,8 +20,8 @@ jobs:
 
       - name: Add Flathub and install runtimes
         run: |
-          flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
-          flatpak install -y flathub org.gnome.Platform//48 org.gnome.Sdk//48 || true
+          flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
+          flatpak install -y --user flathub org.gnome.Platform//48 org.gnome.Sdk//48 || true
 
       - name: Run build script (with fallback)
         run: |
