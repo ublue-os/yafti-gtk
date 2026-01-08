@@ -17,8 +17,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Build Flatpak (flatpak-builder action)
         id: flatpak_build
@@ -46,71 +44,56 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract version and check against tags
         id: version_check
         run: |
           set -euo pipefail
           
-          # Extract version from manifest (key: value)
           new_version=$(sed -n -E 's/^[[:space:]]*(version|app-version):[[:space:]]*"?([^\"]+)"?.*/\2/p' com.github.yafti.gtk.yml | head -n1)
 
           if [ -z "$new_version" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No version found in manifest"
             exit 0
           fi
 
-          # Compare against latest tag (assume tags like v1.2.3)
+          # Compare against latest tag
           git fetch --tags origin || true
           latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
           latest_version="${latest_tag#v}"
 
           if [ -z "$latest_version" ]; then
+            echo "No existing tags, will create first release"
             echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # If new_version > latest_version then release, otherwise skip
+          # Check if new version is higher
           highest=$(printf '%s\n' "$latest_version" "$new_version" | sort -V | tail -n1)
           if [ "$highest" = "$new_version" ] && [ "$new_version" != "$latest_version" ]; then
+            echo "Version bumped from $latest_version to $new_version"
             echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "Version $new_version not higher than $latest_version, skipping release"
           fi
 
       - name: Download bundle artifact
-        if: needs.build.result == 'success' && steps.version_check.outputs.new_version != ''
+        if: steps.version_check.outputs.new_version != ''
         uses: actions/download-artifact@v4
         with:
           name: yafti-gtk-flatpak
           path: .
 
-      - name: Create release and upload asset (gh)
-        if: needs.build.result == 'success' && steps.version_check.outputs.new_version != ''
+      - name: Create release and upload asset
+        if: steps.version_check.outputs.new_version != ''
         run: |
-          set -euo pipefail
           VERSION="${{ steps.version_check.outputs.new_version }}"
-          echo "Preparing release v${VERSION} and uploading yafti-gtk.flatpak"
-
-          # Create and push a git tag matching the manifest version, then create the release
-
-          if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "Release v${VERSION} already exists — uploading/updating asset"
-            gh release upload "v${VERSION}" yafti-gtk.flatpak --clobber || true
-          else
-            # create tag if it doesn't exist locally or remotely
-            if ! git rev-parse "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git tag -a "v${VERSION}" -m "v${VERSION}"
-              git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" "v${VERSION}"
-            fi
-
-            echo "Creating release v${VERSION} and uploading yafti-gtk.flatpak"
-            gh release create "v${VERSION}" yafti-gtk.flatpak --title "v${VERSION}" --generate-notes --target "${{ github.sha }}"
-          fi
+          echo "Creating release v${VERSION}"
+          gh release create "v${VERSION}" yafti-gtk.flatpak \
+            --title "v${VERSION}" \
+            --generate-notes \
+            --target "${{ github.sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
