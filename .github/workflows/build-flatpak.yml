@@ -1,8 +1,10 @@
 name: Build Flatpak
 
+env:
+  WORKFLOW_VERSION: 1
+
 on:
-  push:
-    branches: [ main ]
+  push:            # run on all branches
   pull_request:
   workflow_dispatch:
 
@@ -17,9 +19,86 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Flatpak (flatpak-builder action)
+        id: flatpak_build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           manifest-path: com.github.yafti.gtk.yml
           bundle: yafti-gtk.flatpak
-          upload-artifact: true
+          upload-artifact: false
           verbose: true
+
+      - name: Upload bundle artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yafti-gtk-flatpak
+          path: yafti-gtk.flatpak
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check manifest changed and extract version
+        id: version_check
+        run: |
+          set -euo pipefail
+          MANIFEST=com.github.yafti.gtk.yml
+          BEFORE="${{ github.event.before }}"
+
+          if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git diff --name-only "$BEFORE" "${{ github.sha }}" | grep -q "^${MANIFEST}$"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git show "$BEFORE:${MANIFEST}" > old_manifest.yml || true
+
+          extract_version() {
+            awk '/^(version|app-version):/ { for (i=2;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":"\n") }' "$1" \
+              | sed -E 's/^\s+//; s/"//g; s/\r$//' | head -n1
+          }
+
+          new_version=$(extract_version com.github.yafti.gtk.yml || true)
+          prev_version=$(extract_version old_manifest.yml || true)
+
+          if [ -z "$new_version" ] || [ "$new_version" = "$prev_version" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Download bundle artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: yafti-gtk-flatpak
+
+      - name: Create GitHub release
+        id: create_release
+        if: steps.version_check.outputs.new_version != ''
+        uses: actions/create-release@v1
+        with:
+          tag_name: v${{ steps.version_check.outputs.new_version }}
+          release_name: v${{ steps.version_check.outputs.new_version }}
+          body: "Release ${{ steps.version_check.outputs.new_version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release asset
+        if: steps.version_check.outputs.new_version != ''
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./yafti-gtk.flatpak
+          asset_name: yafti-gtk.flatpak
+          asset_content_type: application/octet-stream
