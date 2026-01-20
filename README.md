@@ -1,6 +1,6 @@
 # Bazzite Portal
 
-![Bazzite Portal Screenshot](assets/screenshot.png)
+![Bazzite Portal Screenshot](assets/demo.png)
 
 
 A GTK3 interface for the Bazzite Portal, providing quick access to various useful scripts, fixes, and QOL tweaks for the terminal averse.
