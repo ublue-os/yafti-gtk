@@ -14,7 +14,7 @@ gi.require_version('Vte', '2.91')
 from gi.repository import Gtk, Vte, GLib
 
 # Constants
-APP_ID = 'com.github.yafti.gtk'
+APP_ID = 'io.github.xxjsonderuloxx.yafti-gtk'
 APP_TITLE = 'Bazzite Portal'
 DEFAULT_WINDOW_WIDTH = 800
 DEFAULT_WINDOW_HEIGHT = 600

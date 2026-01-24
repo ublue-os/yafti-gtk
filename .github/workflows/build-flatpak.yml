@@ -22,7 +22,7 @@ jobs:
         id: flatpak_build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          manifest-path: com.github.yafti.gtk.yml
+          manifest-path: io.github.xxjsonderuloxx.yafti-gtk.yml
           bundle: yafti-gtk.flatpak
           upload-artifact: false
           verbose: true
@@ -52,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          new_version=$(sed -n -E 's/^[[:space:]]*<release[^>]*version="?([^"]+)"?.*/\1/p; s/^[[:space:]]*<component[^>]*version="?([^"]+)"?.*/\1/p' com.github.yafti.gtk.metainfo.xml | head -n1)
+          new_version=$(sed -n -E 's/^[[:space:]]*<release[^>]*version="?([^"]+)"?.*/\1/p; s/^[[:space:]]*<component[^>]*version="?([^"]+)"?.*/\1/p' io.github.xxjsonderuloxx.yafti-gtk.metainfo.xml | head -n1)
 
           if [ -z "$new_version" ]; then
             echo "No version found in manifest"

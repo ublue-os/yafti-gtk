@@ -39,9 +39,9 @@ modules:
     buildsystem: simple
     build-commands:
       - install -D yafti_gtk.py ${FLATPAK_DEST}/bin/yafti_gtk.py
-      - install -D com.github.yafti.gtk.desktop ${FLATPAK_DEST}/share/applications/com.github.yafti.gtk.desktop
-      - install -D portal.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/com.github.yafti.gtk.svg
-      - install -D com.github.yafti.gtk.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.github.yafti.gtk.metainfo.xml
+      - install -D io.github.xxjsonderuloxx.yafti-gtk.desktop ${FLATPAK_DEST}/share/applications/io.github.xxjsonderuloxx.yafti-gtk.desktop
+      - install -D portal.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/io.github.xxjsonderuloxx.yafti-gtk.svg
+      - install -D io.github.xxjsonderuloxx.yafti-gtk.metainfo.xml ${FLATPAK_DEST}/share/metainfo/io.github.xxjsonderuloxx.yafti-gtk.metainfo.xml
       - |
         mkdir -p ${FLATPAK_DEST}/lib/girepository-1.0 || true
         if [ -d ${FLATPAK_DEST}/lib64/girepository-1.0 ]; then
@@ -51,8 +51,8 @@ modules:
       - type: file
         path: yafti_gtk.py
       - type: file
-        path: com.github.yafti.gtk.desktop
+        path: io.github.xxjsonderuloxx.yafti-gtk.desktop
       - type: file
         path: portal.svg
       - type: file
-        path: com.github.yafti.gtk.metainfo.xml
+        path: io.github.xxjsonderuloxx.yafti-gtk.metainfo.xml
