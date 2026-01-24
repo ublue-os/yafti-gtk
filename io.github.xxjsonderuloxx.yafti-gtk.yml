@@ -1,4 +1,4 @@
-id: com.github.yafti.gtk
+id: io.github.xxjsonderuloxx.yafti-gtk
 runtime: org.gnome.Platform
 runtime-version: '48'
 sdk: org.gnome.Sdk
