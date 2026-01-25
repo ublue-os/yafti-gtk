@@ -2,10 +2,24 @@
 <component type="desktop-application">
   <id>io.github.xxjsonderuloxx.yafti-gtk</id>
   <name>Bazzite Portal</name>
+  <name xml:lang="cs">Portál Bazzite</name>
+  <name xml:lang="de">Bazzite Portal</name>
+  <name xml:lang="el">Πύλη Bazzite</name>
+  <name xml:lang="es">Portal Bazzite</name>
+  <name xml:lang="fr">Portail Bazzite</name>
+  <name xml:lang="it">Portale Bazzite</name>
+  <name xml:lang="ru">Bazzite Портал</name>
   <developer id="io.github.xxjsonderuloxx">
     <name>Kurt Himebauch</name>
   </developer>
   <summary>Helps you setup Bazzite</summary>
+  <summary xml:lang="cs">Pomůže vám nastavit Bazzite</summary>
+  <summary xml:lang="de">Hilft bei der Einrichtung von Bazzite</summary>
+  <summary xml:lang="el">Σας βοηθά να ρυθμίσετε το Bazzite</summary>
+  <summary xml:lang="es">Te ayuda a configurar Bazzite</summary>
+  <summary xml:lang="fr">Vous aide à configurer Bazzite</summary>
+  <summary xml:lang="it">Ti aiuta a configurare Bazzite</summary>
+  <summary xml:lang="ru">Помогает вам настроить Bazzite</summary>
   <description>
     <p>Yafti GTK — helper GUI to run Bazzite setup scripts and utilities.</p>
   </description>
