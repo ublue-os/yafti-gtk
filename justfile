@@ -13,11 +13,11 @@ install:
 
 # Uninstall the flatpak
 uninstall:
-    flatpak uninstall --user -y com.github.yafti.gtk || true
+    flatpak uninstall --user -y io.github.xxjsonderuloxx.yafti-gtk || true
 
 # Run yafti-gtk from the installed flatpak with default config
 run yml="/run/host/usr/share/yafti/yafti.yml":
-    flatpak run com.github.yafti.gtk {{yml}}
+    flatpak run io.github.xxjsonderuloxx.yafti-gtk {{yml}}
 
 # Set up flatpak-builder from Flathub
 setup:
