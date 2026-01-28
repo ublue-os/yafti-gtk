@@ -34,13 +34,13 @@ The application requires a YAML configuration file path as a command-line argume
 ### On Bazzite (default config)
 
 ```bash
-flatpak run com.github.yafti.gtk /run/host/usr/share/yafti/yafti.yml
+flatpak run io.github.ublue_os.yafti_gtk /run/host/usr/share/yafti/yafti.yml
 ```
 
 ### With Custom Config
 
 ```bash
-flatpak run com.github.yafti.gtk /path/to/custom/yafti.yml
+flatpak run io.github.ublue_os.yafti_gtk /path/to/custom/yafti.yml
 ```
 
 ### Desktop Shortcut
