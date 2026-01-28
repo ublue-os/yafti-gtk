@@ -1,4 +1,4 @@
-name: Build Flatpak
+name: Create Release
 
 env:
   WORKFLOW_VERSION: 1
@@ -9,35 +9,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
-      options: --privileged
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build Flatpak (flatpak-builder action)
-        id: flatpak_build
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          manifest-path: io.github.ublue_os.yafti_gtk.yml
-          bundle: yafti-gtk.flatpak
-          upload-artifact: false
-          verbose: true
-
-      - name: Upload bundle artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: yafti-gtk-flatpak
-          path: yafti-gtk.flatpak
-          if-no-files-found: error
-
-  release:
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build.result == 'success'
+  create_release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -51,7 +24,7 @@ jobs:
         id: version_check
         run: |
           set -euo pipefail
-          
+
           new_version=$(sed -n -E 's/^[[:space:]]*<release[^>]*version="?([^"]+)"?.*/\1/p; s/^[[:space:]]*<component[^>]*version="?([^"]+)"?.*/\1/p' io.github.ublue_os.yafti_gtk.metainfo.xml | head -n1)
 
           if [ -z "$new_version" ]; then
@@ -79,14 +52,7 @@ jobs:
             echo "Version $new_version not higher than $latest_version, skipping release"
           fi
 
-      - name: Download bundle artifact
-        if: steps.version_check.outputs.new_version != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: yafti-gtk-flatpak
-          path: .
-
-      - name: Create release and upload asset
+      - name: Create release
         if: steps.version_check.outputs.new_version != ''
         run: |
           VERSION="${{ steps.version_check.outputs.new_version }}"
@@ -96,7 +62,7 @@ jobs:
             echo "Release v${VERSION} already exists aborting" >&2
             exit 1
           fi
-          gh release create "v${VERSION}" yafti-gtk.flatpak \
+          gh release create "v${VERSION}" \
             --title "v${VERSION}" \
             --generate-notes \
             --target "${{ github.sha }}"

@@ -10,22 +10,9 @@ The default configuration file is located at:
 /usr/share/yafti/yafti.yml
 ```
 
-## Building from Source
+## Installing
 
-review the justfile for all recipies. You can stack just commands together, for example:
-
-```bash
-just setup build install run
-```
-
-This will install `flatpak-builder`, build the flatpak, install to host, then run it with the default source file.
-
-Then for subsequent changes, you could run:
-
-```bash
-just clean uninstall build
-```
-Or any combination you need to test any changes.
+Note: this application will soon be published in the Terra repository, once available, prefer installing from Terra. Until then, run the app from source as shown in the sections bellow.
 
 ## Running
 
@@ -34,13 +21,13 @@ The application requires a YAML configuration file path as a command-line argume
 ### On Bazzite (default config)
 
 ```bash
-flatpak run io.github.ublue_os.yafti_gtk /run/host/usr/share/yafti/yafti.yml
+yafti_gtk.py /run/host/usr/share/yafti/yafti.yml
 ```
 
 ### With Custom Config
 
 ```bash
-flatpak run io.github.ublue_os.yafti_gtk /path/to/custom/yafti.yml
+yafti_gtk.py /path/to/custom/yafti.yml
 ```
 
 ### Desktop Shortcut
@@ -59,3 +46,7 @@ screens:
         description: "Optional description"
         script: "command to run"
 ```
+
+## Installing
+
+Note: this application will soon be published in the Terra repository, once available, prefer installing from Terra. Until then, run the app from source as shown in the "Running" section above.
