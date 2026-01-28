@@ -10,8 +10,7 @@ import os
 import sys
 
 gi.require_version('Gtk', '3.0')
-gi.require_version('Vte', '2.91')
-from gi.repository import Gtk, Vte, GLib
+from gi.repository import Gtk, GLib
 
 # Constants
 APP_ID = 'io.github.ublue_os.yafti_gtk'
@@ -22,7 +21,7 @@ DIALOG_WIDTH = 700
 DIALOG_HEIGHT = 400
 SCROLLBACK_LINES = 10000
 TERMINAL_CHECK_TIMEOUT = 2
-FLATPAK_SPAWN = '/usr/bin/flatpak-spawn'
+ 
 
 
 def set_widget_margins(widget, top=10, bottom=10, start=10, end=10):
@@ -256,61 +255,15 @@ class YaftiGTK(Gtk.Window):
         """Handle action button click - run script in terminal window"""
         if not script:
             return
-
-        # Try host terminal first; fall back to embedded VTE if it fails
+        # Always try host terminal; if unavailable show an error
         if self.launch_host_terminal(script.strip()):
             return
-        
-        # Create dialog with terminal
-        dialog = Gtk.Dialog(
-            title=f"Running: {title}",
-            transient_for=self,
-            flags=0
-        )
-        dialog.set_default_size(DIALOG_WIDTH, DIALOG_HEIGHT)
-        
-        # Create terminal widget
-        terminal = Vte.Terminal()
-        terminal.set_scroll_on_output(True)
-        terminal.set_scrollback_lines(SCROLLBACK_LINES)
-        
-        # Create scrolled window for terminal
-        scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled.add(terminal)
-        
-        dialog.vbox.pack_start(scrolled, True, True, 0)
-        
-        # Add close button
-        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
-        
-        # Show dialog
-        dialog.show_all()
-        
-        # Spawn the script in the terminal using flatpak-spawn to execute on the host
-        # so ujust and other host tools are available
-        try:
-            cmd = [FLATPAK_SPAWN, '--host', '/bin/bash', '-c', script]
 
-            terminal.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.getcwd(),
-                cmd,
-                None,
-                GLib.SpawnFlags.DEFAULT,
-                None,
-                None,
-                -1,
-                None,
-                self.on_terminal_spawn_callback,
-                (dialog, title)
-            )
-        except Exception as e:
-            show_error_dialog(self, "Error running script", str(e))
-            dialog.destroy()
-        
-        # Handle dialog response
-        dialog.connect("response", lambda d, r: d.destroy())
+        show_error_dialog(
+            self,
+            "No terminal available",
+            "Could not launch a host terminal to run the script.\n\nPlease install a terminal emulator or run the following command manually:\n\n" + script
+        )
 
     def launch_host_terminal(self, script):
         """Attempt to run a command in a host terminal. Returns True if launched."""
@@ -323,9 +276,9 @@ class YaftiGTK(Gtk.Window):
         
         for terminal in candidate_terminals:
             try:
-                # First check if terminal exists on host
+                # First check if terminal exists on PATH
                 check = subprocess.run(
-                    [FLATPAK_SPAWN, "--host", "which", terminal],
+                    ["which", terminal],
                     capture_output=True,
                     timeout=TERMINAL_CHECK_TIMEOUT
                 )
@@ -334,8 +287,6 @@ class YaftiGTK(Gtk.Window):
                     
                 # Terminal exists, launch it
                 cmd = [
-                    FLATPAK_SPAWN,
-                    "--host",
                     terminal,
                     "--",
                     "bash",
@@ -353,26 +304,14 @@ class YaftiGTK(Gtk.Window):
         print("Host terminal launch failed: no suitable terminal found.")
         return False
     
-    def on_terminal_spawn_callback(self, terminal, pid, error, user_data, *args):
-        """Callback after terminal spawn"""
-        dialog, title = user_data
-
-        if error:
-            print(f"Error spawning terminal for {title}: {error}")
-            return
-        terminal.connect("child-exited", self.on_terminal_child_exited, dialog, title)
     
-    def on_terminal_child_exited(self, terminal, status, dialog, title):
-        """Handle terminal process exit"""
-        if status != 0:
-            print(f"Script '{title}' exited with code {status}")
 
 
 def main():
     # Check command-line arguments
     if len(sys.argv) != 2:
         print(f"Usage: {APP_ID} CONFIG_FILE")
-        print(f"Example: flatpak run {APP_ID} /run/host/usr/share/yafti/yafti.yml")
+        print("Example: python3 yafti_gtk.py /path/to/yafti.yml")
         sys.exit(1)
     
     config_file = sys.argv[1]
