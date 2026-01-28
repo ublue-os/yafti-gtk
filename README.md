@@ -21,7 +21,7 @@ The application requires a YAML configuration file path as a command-line argume
 ### On Bazzite (default config)
 
 ```bash
-yafti_gtk.py /run/host/usr/share/yafti/yafti.yml
+yafti_gtk.py /usr/share/yafti/yafti.yml
 ```
 
 ### With Custom Config
@@ -46,7 +46,3 @@ screens:
         description: "Optional description"
         script: "command to run"
 ```
-
-## Installing
-
-Note: this application will soon be published in the Terra repository, once available, prefer installing from Terra. Until then, run the app from source as shown in the "Running" section above.
