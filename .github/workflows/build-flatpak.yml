@@ -91,6 +91,11 @@ jobs:
         run: |
           VERSION="${{ steps.version_check.outputs.new_version }}"
           echo "Creating release v${VERSION}"
+          # Fail if the release already exists to keep releases immutable
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} already exists aborting" >&2
+            exit 1
+          fi
           gh release create "v${VERSION}" yafti-gtk.flatpak \
             --title "v${VERSION}" \
             --generate-notes \
