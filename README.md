@@ -12,7 +12,12 @@ The default configuration file is located at:
 
 ## Installing
 
-Note: this application will soon be published in the Terra repository, once available, prefer installing from Terra. Until then, run the app from source as shown in the sections bellow.
+On Fedora/Fedora based systems, install the [Terra repository](https://terra.fyralabs.com/).
+Then, run the following command:
+
+```
+sudo dnf install bazzite-portal
+```
 
 ## Running
 
