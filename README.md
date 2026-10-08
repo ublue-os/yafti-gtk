@@ -6,7 +6,7 @@
 ## Demo - GNOME
 ![Bazzite Portal Demo (GNOME)](assets/demo-gnome.gif)
 
-A GTK4 interface for the Bazzite Portal, providing quick access to various useful scripts, fixes, and QOL tweaks for the terminal averse.
+A GTK4 interface for the Bazzite Portal, providing quick access to various useful scripts, fixes, and QOL tweaks for the terminal averse. Supports mouse, keyboard, and gamepad.
 
 On installed systems, the default configuration file is located at:
 ```
@@ -14,6 +14,8 @@ On installed systems, the default configuration file is located at:
 ```
 
 ## Installing
+
+Bazzite includes the Portal by default.
 
 On Fedora/Fedora based systems, install the [Terra repository](https://terra.fyralabs.com/).
 Then, run the following command:
@@ -44,6 +46,21 @@ yafti_gtk.py /path/to/custom/yafti.yml
 ### Desktop Shortcut
 
 The installed desktop file automatically launches with the default Bazzite config path. You can find it in your application menu as "Bazzite Portal".
+
+## Controller support
+
+The app uses **SDL3 (3.2+)** for gamepad navigation, with no additional Python
+package. Controller support starts automatically; mouse and keyboard remain
+available if SDL3 is missing.
+
+- **D-pad / stick up and down:** navigate actions.
+- **A / Cross:** select. **B / Circle:** back or clear search.
+- **LB / RB:** switch tabs.
+- **X / Square:** focus search and request Steam's keyboard in Gaming Mode.
+- **Y / Triangle:** toggle Launch at startup.
+
+Button glyphs appear when a controller is used. For Steam Gaming Mode, add the
+app as a non-Steam game.
 
 ## Configuration
 
@@ -90,3 +107,19 @@ Rules:
 - Actions with only `script` launch directly in a terminal.
 - `status_script` should print a short stable status string such as `enable`, `disable`, or `install-beta`.
 - Modal button highlighting matches the returned status string against the option `id`.
+
+## Development
+
+Run controller tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Check scrolling on Linux with GTK4 and Xvfb:
+
+```bash
+xvfb-run -a python3 tests/gtk_scroll_smoke.py
+```
+
+Distribution packages should include the native `SDL3` dependency.
