@@ -108,7 +108,7 @@ class InputTests(unittest.TestCase):
 class DriverTests(unittest.TestCase):
     def setUp(self):
         self.backend = Mock()
-        self.backend.sample.return_value = (1, set(), 0, 0)
+        self.backend.sample.return_value = [(1, set(), 0, 0, {})]
         self.scheduler = Mock()
         self.scheduler.timeout_add.return_value = 42
         self.context = 'main'
@@ -118,38 +118,38 @@ class DriverTests(unittest.TestCase):
 
     def test_focus_gates_input_and_release(self):
         self.context = None
-        self.backend.sample.return_value = (1, {'confirm'}, 0, 0)
+        self.backend.sample.return_value = [(1, {'confirm'}, 0, 0, {})]
         self.driver.poll()
         self.context = 'main'
         self.driver.poll()
         self.assertEqual(self.commands, [])
-        self.backend.sample.return_value = (1, set(), 0, 0)
+        self.backend.sample.return_value = [(1, set(), 0, 0, {})]
         self.driver.poll()
-        self.backend.sample.return_value = (1, {'confirm'}, 0, 0)
+        self.backend.sample.return_value = [(1, {'confirm'}, 0, 0, {})]
         self.driver.poll()
         self.driver.poll()
         self.assertEqual(self.commands, ['confirm'])
 
     def test_disconnect_and_reconnect_held_button(self):
-        self.backend.sample.return_value = None
+        self.backend.sample.return_value = []
         self.driver.poll()
-        self.backend.sample.return_value = (2, {'back'}, 0, 0)
+        self.backend.sample.return_value = [(2, {'back'}, 0, 0, {})]
         self.driver.poll()
         self.assertEqual(self.commands, [])
-        self.backend.sample.return_value = (2, set(), 0, 0)
+        self.backend.sample.return_value = [(2, set(), 0, 0, {})]
         self.driver.poll()
-        self.backend.sample.return_value = (2, {'back'}, 0, 0)
+        self.backend.sample.return_value = [(2, {'back'}, 0, 0, {})]
         self.driver.poll()
         self.assertEqual(self.commands, ['back'])
 
     def test_modal_context_requires_release(self):
         self.context = 'dialog'
-        self.backend.sample.return_value = (1, {'confirm'}, 0, 0)
+        self.backend.sample.return_value = [(1, {'confirm'}, 0, 0, {})]
         self.driver.poll()
         self.assertEqual(self.commands, [])
 
     def test_activation_discards_remaining_commands(self):
-        self.backend.sample.return_value = (1, {'confirm', 'next_tab'}, 0, 0)
+        self.backend.sample.return_value = [(1, {'confirm', 'next_tab'}, 0, 0, {})]
         self.driver.poll()
         self.assertEqual(self.commands, ['confirm'])
 
@@ -164,6 +164,48 @@ class DriverTests(unittest.TestCase):
             self.assertFalse(self.driver.poll())
         self.backend.close.assert_called_once()
         self.assertIsNone(self.driver.source)
+
+    def test_all_controllers_have_independent_button_edges(self):
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, set(), 0, 0, {'confirm': 5})]
+        self.driver.poll()
+        self.backend.sample.return_value = [(1, {'next_tab'}, 0, 0, {}), (2, {'previous_tab'}, 0, 0, {'confirm': 5})]
+        self.driver.poll()
+        self.driver.poll()
+        self.assertEqual(self.commands, ['next_tab', 'previous_tab'])
+        self.assertEqual(self.backend.button_labels, {'confirm': 5})
+
+    def test_unrelated_disconnect_preserves_held_button_state(self):
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, set(), 0, 0, {})]
+        self.driver.poll()
+        self.backend.sample.return_value = [(2, {'next_tab'}, 0, 0, {})]
+        self.driver.poll()
+        self.driver.poll()
+        self.assertEqual(self.commands, ['next_tab'])
+        self.assertEqual(set(self.driver.inputs), {2})
+
+    def test_simultaneous_confirm_does_not_activate_twice(self):
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, set(), 0, 0, {})]
+        self.driver.poll()
+        self.backend.sample.return_value = [(1, {'confirm'}, 0, 0, {}), (2, {'confirm'}, 0, 0, {})]
+        self.driver.poll()
+        self.driver.poll()
+        self.assertEqual(self.commands, ['confirm'])
+
+    def test_idle_controller_does_not_block_other_controller_repeat(self):
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, set(), 0, 0, {})]
+        self.driver.poll()
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, {'down'}, 0, 0, {})]
+        with patch.object(app.time, 'monotonic', side_effect=[0, .35, .451]):
+            for _ in range(3):
+                self.driver.poll()
+        self.assertEqual(self.commands, ['down', 'down', 'down'])
+
+    def test_distinct_controllers_keep_simultaneous_navigation(self):
+        self.backend.sample.return_value = [(1, set(), 0, 0, {}), (2, set(), 0, 0, {})]
+        self.driver.poll()
+        self.backend.sample.return_value = [(1, {'down'}, 0, 0, {}), (2, {'down'}, 0, 0, {})]
+        self.driver.poll()
+        self.assertEqual(self.commands, ['down', 'down'])
 
 
 class SDLTests(unittest.TestCase):
@@ -194,7 +236,7 @@ class SDLTests(unittest.TestCase):
         first = self.backend.sample()
         self.sdl.SDL_GamepadConnected.return_value = False
         second = self.backend.sample()
-        self.assertNotEqual(first[0], second[0])
+        self.assertNotEqual(first[0][0], second[0][0])
         self.sdl.SDL_CloseGamepad.assert_called_once_with(123)
         self.assertEqual(self.sdl.SDL_free.call_count, 2)
 
@@ -204,6 +246,49 @@ class SDLTests(unittest.TestCase):
         self.backend.close()
         self.sdl.SDL_CloseGamepad.assert_called_once_with(123)
         self.sdl.SDL_QuitSubSystem.assert_called_once_with(0x2000)
+
+    def test_opens_and_reads_all_connected_controllers(self):
+        self.sdl.SDL_OpenGamepad.side_effect = lambda device: {7: 123, 8: 456}[device]
+
+        def enumerate_devices(count):
+            ctypes.cast(count, ctypes.POINTER(ctypes.c_int))[0] = 2
+            return (ctypes.c_uint32 * 3)(7, 8, 0)
+
+        self.sdl.SDL_GetGamepads.side_effect = enumerate_devices
+        self.sdl.SDL_GetGamepadButton.side_effect = lambda handle, button: handle == 456 and button == 0
+        samples = self.backend.sample()
+        self.assertEqual(len(samples), 2)
+        self.assertEqual(samples[0][1], set())
+        self.assertEqual(samples[1][1], {'confirm'})
+        self.backend.sample()
+        self.assertEqual(self.sdl.SDL_OpenGamepad.call_count, 2)
+        self.backend.close()
+        self.sdl.SDL_CloseGamepad.assert_any_call(123)
+        self.sdl.SDL_CloseGamepad.assert_any_call(456)
+
+    def test_hotplug_device_is_discovered_through_event_pump(self):
+        devices = []
+
+        def enumerate_devices(count):
+            ctypes.cast(count, ctypes.POINTER(ctypes.c_int))[0] = len(devices)
+            return (ctypes.c_uint32 * (len(devices) + 1))(*devices, 0)
+
+        self.sdl.SDL_GetGamepads.side_effect = enumerate_devices
+        self.assertEqual(self.backend.sample(), [])
+        self.sdl.SDL_PumpEvents.side_effect = lambda: devices.append(7) if not devices else None
+        samples = self.backend.sample()
+        self.assertEqual(len(samples), 1)
+        self.sdl.SDL_OpenGamepad.assert_called_once_with(7)
+        self.sdl.SDL_FlushEvents.assert_called_with(0, 0xFFFF)
+
+    def test_preserves_sdl_default_filtering_and_user_environment(self):
+        with patch.dict(app.os.environ, {}, clear=True), patch.object(app.ctypes.util, 'find_library', return_value='SDL3'), patch.object(app.ctypes, 'CDLL', return_value=self.sdl):
+            app.SDLGamepad().close()
+            self.assertNotIn('SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD', app.os.environ)
+        for value in ('0', '1'):
+            with patch.dict(app.os.environ, {'SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD': value}), patch.object(app.ctypes, 'CDLL', return_value=self.sdl):
+                app.SDLGamepad().close()
+                self.assertEqual(app.os.environ['SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD'], value)
 
     def test_missing_library(self):
         with patch.object(app.ctypes, 'CDLL', side_effect=OSError('missing')):

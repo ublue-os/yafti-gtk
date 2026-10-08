@@ -50,8 +50,9 @@ The installed desktop file automatically launches with the default Bazzite confi
 ## Controller support
 
 The app uses **SDL3 (3.2+)** for gamepad navigation, with no additional Python
-package. Controller support starts automatically; mouse and keyboard remain
-available if SDL3 is missing.
+package. All connected SDL-recognized gamepads can control the app using SDL's
+default filtering. Controller support starts automatically; mouse and keyboard
+remain available if SDL3 is missing.
 
 - **D-pad / stick up and down:** navigate actions.
 - **A / Cross:** select. **B / Circle:** back or clear search.

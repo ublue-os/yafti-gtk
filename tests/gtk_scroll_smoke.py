@@ -28,8 +28,22 @@ def assert_visible(target):
     bottom = top + bounds.get_height()
     start = 0
     end = viewport.get_height()
-    assert top >= start - 1 and bottom <= end + 1, (top, bottom, start, end)
+    assert top >= start - 1 and bottom <= end + 1, (top, bottom, start, end,
+            adjustment.get_value(), adjustment.get_page_size(), adjustment.get_upper())
     return adjustment.get_value()
+
+
+def wait_until_visible(target):
+    # GTK's focus-scroll animation may take longer under software rendering.
+    # Check the final visible bounds, rather than assuming a fixed frame count.
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            return assert_visible(target)
+        except AssertionError:
+            if time.monotonic() >= deadline:
+                raise
+            drain(.02)
 
 
 def exercise(window, actions):
@@ -39,13 +53,13 @@ def exercise(window, actions):
     for target in actions:
         window.focus_controller_target(target)
         drain(.3)
-        value = assert_visible(target)
+        value = wait_until_visible(target)
         assert value >= previous - 1, ('downward scroll reversed', previous, value)
         previous = value
     for target in reversed(actions):
         window.focus_controller_target(target)
         drain(.3)
-        value = assert_visible(target)
+        value = wait_until_visible(target)
         assert value <= previous + 1, ('upward scroll reversed', previous, value)
         previous = value
     # Match held-stick repeat timing, then check that scrolling converges to the
@@ -57,7 +71,7 @@ def exercise(window, actions):
         drain(.1)
     drain(.35)
     assert window.controller_focus == actions[-1]
-    assert_visible(actions[-1])
+    wait_until_visible(actions[-1])
 
 
 def main():

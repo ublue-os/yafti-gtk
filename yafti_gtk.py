@@ -105,7 +105,7 @@ class SDLGamepad:
     def __init__(self):
         library = ctypes.util.find_library('SDL3') or 'libSDL3.so.0'
         self.sdl = ctypes.CDLL(library)
-        self.handle = None
+        self.gamepads = {}
         self.connection_serial = 0
         self.button_labels = {}
         self.initialized = False
@@ -115,6 +115,8 @@ class SDLGamepad:
             'SDL_QuitSubSystem': (None, [ctypes.c_uint32]),
             'SDL_GetError': (ctypes.c_char_p, []),
             'SDL_UpdateGamepads': (None, []),
+            'SDL_PumpEvents': (None, []),
+            'SDL_FlushEvents': (None, [ctypes.c_uint32, ctypes.c_uint32]),
             'SDL_SetGamepadEventsEnabled': (None, [ctypes.c_bool]),
             'SDL_SetJoystickEventsEnabled': (None, [ctypes.c_bool]),
             'SDL_GetGamepads': (ctypes.POINTER(ctypes.c_uint32), [ctypes.POINTER(ctypes.c_int)]),
@@ -140,38 +142,45 @@ class SDLGamepad:
         self.sdl.SDL_SetJoystickEventsEnabled(False)
 
     def sample(self):
+        # Linux udev hot-plug notifications are processed by the SDL event pump,
+        # even when button/axis events are disabled and we read state directly.
+        self.sdl.SDL_PumpEvents()
         self.sdl.SDL_UpdateGamepads()
-        if self.handle and not self.sdl.SDL_GamepadConnected(self.handle):
-            self.sdl.SDL_CloseGamepad(self.handle)
-            self.handle = None
-        if not self.handle:
-            count = ctypes.c_int()
-            ids = self.sdl.SDL_GetGamepads(ctypes.byref(count))
-            try:
-                if ids:
-                    for index in range(count.value):
-                        self.handle = self.sdl.SDL_OpenGamepad(ids[index])
-                        if self.handle:
-                            self.connection_serial += 1
-                            self.button_labels = {
-                                command: self.sdl.SDL_GetGamepadButtonLabel(self.handle, self.BUTTONS[command])
-                                for command in ('confirm', 'back', 'focus_search', 'toggle_startup')}
-                            break
-            finally:
-                if ids:
-                    self.sdl.SDL_free(ids)
-        if not self.handle:
-            return None
-        buttons = {name for name, button in self.BUTTONS.items()
-                   if self.sdl.SDL_GetGamepadButton(self.handle, button)}
-        x = self.sdl.SDL_GetGamepadAxis(self.handle, 0) / 32768.0
-        y = self.sdl.SDL_GetGamepadAxis(self.handle, 1) / 32768.0
-        return self.connection_serial, buttons, x, y
+        self.sdl.SDL_FlushEvents(0, 0xFFFF)
+        for device, (handle, _serial, _labels) in list(self.gamepads.items()):
+            if not self.sdl.SDL_GamepadConnected(handle):
+                self.sdl.SDL_CloseGamepad(handle)
+                del self.gamepads[device]
+        count = ctypes.c_int()
+        ids = self.sdl.SDL_GetGamepads(ctypes.byref(count))
+        try:
+            if ids:
+                for index in range(count.value):
+                    device = ids[index]
+                    if device in self.gamepads:
+                        continue
+                    handle = self.sdl.SDL_OpenGamepad(device)
+                    if handle:
+                        self.connection_serial += 1
+                        labels = {command: self.sdl.SDL_GetGamepadButtonLabel(handle, self.BUTTONS[command])
+                                  for command in ('confirm', 'back', 'focus_search', 'toggle_startup')}
+                        self.gamepads[device] = (handle, self.connection_serial, labels)
+        finally:
+            if ids:
+                self.sdl.SDL_free(ids)
+        samples = []
+        for handle, serial, labels in self.gamepads.values():
+            buttons = {name for name, button in self.BUTTONS.items()
+                       if self.sdl.SDL_GetGamepadButton(handle, button)}
+            x = self.sdl.SDL_GetGamepadAxis(handle, 0) / 32768.0
+            y = self.sdl.SDL_GetGamepadAxis(handle, 1) / 32768.0
+            samples.append((serial, buttons, x, y, labels))
+        return samples
 
     def close(self):
-        if self.handle:
-            self.sdl.SDL_CloseGamepad(self.handle)
-            self.handle = None
+        for handle, _serial, _labels in self.gamepads.values():
+            self.sdl.SDL_CloseGamepad(handle)
+        self.gamepads.clear()
         if self.initialized:
             self.sdl.SDL_QuitSubSystem(self.INIT_GAMEPAD)
             self.initialized = False
@@ -183,27 +192,40 @@ class ControllerDriver:
     def __init__(self, backend, context, dispatch, scheduler=GLib):
         self.backend, self.context, self.dispatch = backend, context, dispatch
         self.scheduler = scheduler
-        self.input = ControllerInput()
+        self.inputs = {}
         self.last_context = None
         self.source = scheduler.timeout_add(16, self.poll)
 
+    def reset_inputs(self):
+        for state in self.inputs.values():
+            state.reset()
+
     def poll(self):
         try:
-            sample = self.backend.sample()
+            samples = self.backend.sample()
             context = self.context()
-            key = (context, sample[0] if sample else None)
-            if key != self.last_context:
-                self.input.reset()
-                self.last_context = key
-            if not context or not sample:
-                self.input.reset()
+            connected = {sample[0] for sample in samples}
+            self.inputs = {serial: state for serial, state in self.inputs.items() if serial in connected}
+            if context != self.last_context:
+                self.reset_inputs()
+                self.last_context = context
+            if not context:
+                self.reset_inputs()
                 return True
-            for command in self.input.update(*sample[1:], time.monotonic()):
+            pending = []
+            now = time.monotonic()
+            for serial, buttons, x, y, labels in samples:
+                state = self.inputs.get(serial)
+                if state is None:
+                    state = self.inputs[serial] = ControllerInput()
+                pending.extend((command, labels) for command in state.update(buttons, x, y, now))
+            for command, labels in pending:
+                self.backend.button_labels = labels
                 self.dispatch(command)
                 # Activation can open a modal or launch a terminal. Discard the
                 # rest of this sample rather than dispatching into a new context.
                 if command in ('confirm', 'back', 'focus_search', 'toggle_startup') or self.context() != context:
-                    self.input.reset()
+                    self.reset_inputs()
                     break
             return True
         except Exception as error:
@@ -217,6 +239,7 @@ class ControllerDriver:
             self.scheduler.source_remove(self.source)
             self.source = None
         self.backend.close()
+        self.inputs.clear()
 
 
 def set_widget_margins(widget, top=10, bottom=10, start=10, end=10):
@@ -496,7 +519,7 @@ class YaftiGTK(Gtk.Window):
 
     def on_controller_context_changed(self, *_args):
         if self.controller_driver:
-            self.controller_driver.input.reset()
+            self.controller_driver.reset_inputs()
 
     def controller_targets(self):
         if self.controller_dialogs:
@@ -588,8 +611,6 @@ class YaftiGTK(Gtk.Window):
         if command == 'confirm':
             if selected is None:
                 self.focus_controller_target(targets[0])
-            elif isinstance(selected, Gtk.Switch):
-                selected.set_active(not selected.get_active())
             else:
                 self.on_controller_focus_changed()
                 selected.activate()
