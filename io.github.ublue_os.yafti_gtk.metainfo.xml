@@ -33,6 +33,7 @@
   </screenshots>
   <url type="homepage">https://github.com/ublue-os/yafti-gtk</url>
   <releases>
+    <release version="0.2.5" date="2026-10-10"/>
     <release version="0.2.4" date="2026-07-20"/>
   </releases>
   <content_rating type="oars-1.1"/>

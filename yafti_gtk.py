@@ -5,7 +5,10 @@ Yafti GTK - A simple GTK GUI for running scripts from yafti.yml
 
 import os
 import subprocess
-import sys, os
+import sys
+import ctypes
+import ctypes.util
+import time
 import threading
 import argparse
 import concurrent.futures
@@ -39,6 +42,206 @@ X-GNOME-Autostart-enabled=true
 DEFAULT_ACCENT = "#a47bea"
 
 
+def controller_button_glyph(command, labels=None):
+    """Use SDL's face-button labels, with Xbox glyphs for unknown devices."""
+    labels = labels or {}
+    glyphs = {1: 'Ⓐ', 2: 'Ⓑ', 3: 'Ⓧ', 4: 'Ⓨ', 5: '✕', 6: '○', 7: '▢', 8: '△'}
+    defaults = {'confirm': 'Ⓐ', 'back': 'Ⓑ', 'focus_search': 'Ⓧ', 'toggle_startup': 'Ⓨ'}
+    return glyphs.get(labels.get(command), defaults[command])
+
+
+def controller_legend_text(labels=None):
+    select = controller_button_glyph('confirm', labels)
+    back = controller_button_glyph('back', labels)
+    return f'↑↓ Move · {select} Select · {back} Back · 〔LB〕/〔RB〕 Tabs'
+
+
+class ControllerInput:
+    """Translate SDL's positional controls into commands, without GTK dependencies."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.armed = False
+        self.previous = set()
+        self.direction = None
+        self.repeat_at = 0
+
+    def update(self, buttons, x, y, now):
+        direction = None
+        if 'up' in buttons:
+            direction = 'up'
+        elif 'down' in buttons:
+            direction = 'down'
+        elif abs(y) >= 0.35 and abs(y) >= abs(x):
+            direction = 'down' if y > 0 else 'up'
+        if not self.armed:
+            self.armed = not buttons and direction is None
+            return []
+        commands = []
+        if direction != self.direction:
+            if direction:
+                commands.append(direction)
+                self.repeat_at = now + 0.350
+        elif direction and now >= self.repeat_at:
+            commands.append(direction)
+            self.repeat_at = now + 0.100
+        self.direction = direction
+        for command in ('back', 'confirm', 'focus_search', 'toggle_startup', 'previous_tab', 'next_tab'):
+            if command in buttons and command not in self.previous:
+                commands.append(command)
+        self.previous = set(buttons)
+        return commands
+
+
+class SDLGamepad:
+    """Small, typed SDL3 adapter. SDL owns input only; GTK owns all windows."""
+
+    BUTTONS = {'confirm': 0, 'back': 1, 'focus_search': 2, 'toggle_startup': 3, 'previous_tab': 9, 'next_tab': 10,
+               'up': 11, 'down': 12, 'left': 13, 'right': 14}
+    INIT_GAMEPAD = 0x00002000
+
+    def __init__(self):
+        library = ctypes.util.find_library('SDL3') or 'libSDL3.so.0'
+        self.sdl = ctypes.CDLL(library)
+        self.gamepads = {}
+        self.connection_serial = 0
+        self.button_labels = {}
+        self.initialized = False
+        signatures = {
+            'SDL_SetHint': (ctypes.c_bool, [ctypes.c_char_p, ctypes.c_char_p]),
+            'SDL_InitSubSystem': (ctypes.c_bool, [ctypes.c_uint32]),
+            'SDL_QuitSubSystem': (None, [ctypes.c_uint32]),
+            'SDL_GetError': (ctypes.c_char_p, []),
+            'SDL_UpdateGamepads': (None, []),
+            'SDL_PumpEvents': (None, []),
+            'SDL_FlushEvents': (None, [ctypes.c_uint32, ctypes.c_uint32]),
+            'SDL_SetGamepadEventsEnabled': (None, [ctypes.c_bool]),
+            'SDL_SetJoystickEventsEnabled': (None, [ctypes.c_bool]),
+            'SDL_GetGamepads': (ctypes.POINTER(ctypes.c_uint32), [ctypes.POINTER(ctypes.c_int)]),
+            'SDL_free': (None, [ctypes.c_void_p]),
+            'SDL_OpenGamepad': (ctypes.c_void_p, [ctypes.c_uint32]),
+            'SDL_CloseGamepad': (None, [ctypes.c_void_p]),
+            'SDL_GamepadConnected': (ctypes.c_bool, [ctypes.c_void_p]),
+            'SDL_GetGamepadButton': (ctypes.c_bool, [ctypes.c_void_p, ctypes.c_int]),
+            'SDL_GetGamepadButtonLabel': (ctypes.c_int, [ctypes.c_void_p, ctypes.c_int]),
+            'SDL_GetGamepadAxis': (ctypes.c_int16, [ctypes.c_void_p, ctypes.c_int]),
+        }
+        for name, (result, arguments) in signatures.items():
+            function = getattr(self.sdl, name)
+            function.restype, function.argtypes = result, arguments
+        # SDL has no window to track focus. The GTK dispatcher gates input instead.
+        self.sdl.SDL_SetHint(b'SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS', b'1')
+        if not self.sdl.SDL_InitSubSystem(self.INIT_GAMEPAD):
+            error = self.sdl.SDL_GetError()
+            self.sdl.SDL_QuitSubSystem(self.INIT_GAMEPAD)
+            raise RuntimeError(error.decode('utf-8', errors='replace') if error else 'SDL initialization failed')
+        self.initialized = True
+        self.sdl.SDL_SetGamepadEventsEnabled(False)
+        self.sdl.SDL_SetJoystickEventsEnabled(False)
+
+    def sample(self):
+        # Linux udev hot-plug notifications are processed by the SDL event pump,
+        # even when button/axis events are disabled and we read state directly.
+        self.sdl.SDL_PumpEvents()
+        self.sdl.SDL_UpdateGamepads()
+        self.sdl.SDL_FlushEvents(0, 0xFFFF)
+        for device, (handle, _serial, _labels) in list(self.gamepads.items()):
+            if not self.sdl.SDL_GamepadConnected(handle):
+                self.sdl.SDL_CloseGamepad(handle)
+                del self.gamepads[device]
+        count = ctypes.c_int()
+        ids = self.sdl.SDL_GetGamepads(ctypes.byref(count))
+        try:
+            if ids:
+                for index in range(count.value):
+                    device = ids[index]
+                    if device in self.gamepads:
+                        continue
+                    handle = self.sdl.SDL_OpenGamepad(device)
+                    if handle:
+                        self.connection_serial += 1
+                        labels = {command: self.sdl.SDL_GetGamepadButtonLabel(handle, self.BUTTONS[command])
+                                  for command in ('confirm', 'back', 'focus_search', 'toggle_startup')}
+                        self.gamepads[device] = (handle, self.connection_serial, labels)
+        finally:
+            if ids:
+                self.sdl.SDL_free(ids)
+        samples = []
+        for handle, serial, labels in self.gamepads.values():
+            buttons = {name for name, button in self.BUTTONS.items()
+                       if self.sdl.SDL_GetGamepadButton(handle, button)}
+            x = self.sdl.SDL_GetGamepadAxis(handle, 0) / 32768.0
+            y = self.sdl.SDL_GetGamepadAxis(handle, 1) / 32768.0
+            samples.append((serial, buttons, x, y, labels))
+        return samples
+
+    def close(self):
+        for handle, _serial, _labels in self.gamepads.values():
+            self.sdl.SDL_CloseGamepad(handle)
+        self.gamepads.clear()
+        if self.initialized:
+            self.sdl.SDL_QuitSubSystem(self.INIT_GAMEPAD)
+            self.initialized = False
+
+
+class ControllerDriver:
+    """GLib timer lifecycle and focus gating, also usable with mocked backends."""
+
+    def __init__(self, backend, context, dispatch, scheduler=GLib):
+        self.backend, self.context, self.dispatch = backend, context, dispatch
+        self.scheduler = scheduler
+        self.inputs = {}
+        self.last_context = None
+        self.source = scheduler.timeout_add(16, self.poll)
+
+    def reset_inputs(self):
+        for state in self.inputs.values():
+            state.reset()
+
+    def poll(self):
+        try:
+            samples = self.backend.sample()
+            context = self.context()
+            connected = {sample[0] for sample in samples}
+            self.inputs = {serial: state for serial, state in self.inputs.items() if serial in connected}
+            if context != self.last_context:
+                self.reset_inputs()
+                self.last_context = context
+            if not context:
+                self.reset_inputs()
+                return True
+            pending = []
+            now = time.monotonic()
+            for serial, buttons, x, y, labels in samples:
+                state = self.inputs.get(serial)
+                if state is None:
+                    state = self.inputs[serial] = ControllerInput()
+                pending.extend((command, labels) for command in state.update(buttons, x, y, now))
+            for command, labels in pending:
+                self.backend.button_labels = labels
+                self.dispatch(command)
+                # Activation can open a modal or launch a terminal. Discard the
+                # rest of this sample rather than dispatching into a new context.
+                if command in ('confirm', 'back', 'focus_search', 'toggle_startup') or self.context() != context:
+                    self.reset_inputs()
+                    break
+            return True
+        except Exception as error:
+            print(f'Warning: Controller support disabled: {error}', file=sys.stderr)
+            self.source = None
+            self.backend.close()
+            return False
+
+    def close(self):
+        if self.source is not None:
+            self.scheduler.source_remove(self.source)
+            self.source = None
+        self.backend.close()
+        self.inputs.clear()
+
+
 def set_widget_margins(widget, top=10, bottom=10, start=10, end=10):
     """Apply consistent margins to a widget."""
     widget.set_margin_top(top)
@@ -60,14 +263,21 @@ def clear_container(container):
 
 def show_error_dialog(parent, title, message):
     """Display an error dialog with the given title and message."""
-    dialog = Gtk.AlertDialog(
-        message=title,
-        detail=message,
-        buttons=["OK"]
-    )
-    def _on_dialog_dismissed(dialog, result):
-        dialog.choose_finish(result)
-    dialog.choose(parent, None, _on_dialog_dismissed)
+    dialog = Gtk.Dialog(title=title, transient_for=parent.controller_window(), modal=True)
+    dialog.set_destroy_with_parent(True)
+    dialog.set_default_size(ACTION_DIALOG_WIDTH, -1)
+    root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+    set_widget_margins(root, 16, 16, 16, 16)
+    label = Gtk.Label(label=message, wrap=True, selectable=True)
+    label.set_max_width_chars(60)
+    root.append(label)
+    button = Gtk.Button(label="OK")
+    button.connect('clicked', lambda _button: parent.close_controller_dialog(dialog))
+    root.append(button)
+    dialog.set_child(root)
+    parent.register_controller_dialog(dialog, [button])
+    dialog.present()
+    button.grab_focus()
 
 
 def initialize_gtk():
@@ -123,6 +333,10 @@ class YaftiGTK(Gtk.Window):
         super().__init__(title=APP_TITLE)
         self.set_default_size(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
         self.active_dialog_state = None
+        self.controller_dialogs = []
+        self.controller_driver = None
+        self.controller_focus = None
+        self.controller_used = False
         self.action_widgets = {}  # action_id -> (button)
         self.action_status_widgets = {}
 
@@ -137,6 +351,7 @@ class YaftiGTK(Gtk.Window):
 
         # Search bar at the top
         search_entry = Gtk.SearchEntry()
+        self.search_entry = search_entry
         search_entry.set_placeholder_text(" Search Apps and Actions")
         set_widget_margins(search_entry, 10, 10, 10, 10)
         search_entry.connect("search-changed", self.on_search_changed)
@@ -185,6 +400,7 @@ class YaftiGTK(Gtk.Window):
         results_box.set_vexpand(True)
         set_widget_margins(results_box, 10, 10, 10, 10)
         self.search_results_box = results_box
+        self.search_targets = []
         search_scrolled.set_child(results_box)
         self.content_stack.add_named(search_scrolled, "search")
 
@@ -201,6 +417,12 @@ class YaftiGTK(Gtk.Window):
         spacer.set_hexpand(True)
         bottom_bar.append(spacer)
 
+        self.controller_legend = Gtk.Label(label=controller_legend_text())
+        self.controller_legend.add_css_class('dim-label')
+        self.controller_legend.set_wrap(True)
+        self.controller_legend.set_visible(False)
+        bottom_bar.prepend(self.controller_legend)
+
         autostart_label = Gtk.Label(label="Launch at startup")
         autostart_label.add_css_class('dim-label')
         bottom_bar.append(autostart_label)
@@ -210,6 +432,11 @@ class YaftiGTK(Gtk.Window):
         self.autostart_switch.set_valign(Gtk.Align.CENTER)
         self.autostart_switch.connect("notify::active", self._on_autostart_toggled)
         bottom_bar.append(self.autostart_switch)
+
+        self.startup_controller_glyph = Gtk.Label(label=controller_button_glyph('toggle_startup'))
+        self.startup_controller_glyph.set_visible(False)
+        self.startup_controller_glyph.set_tooltip_text('Toggle Launch at startup')
+        bottom_bar.append(self.startup_controller_glyph)
 
         vbox.append(bottom_bar)
         # Load CSS for highlighting
@@ -223,6 +450,197 @@ class YaftiGTK(Gtk.Window):
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.screen_stack.connect("notify::visible-child", self.on_page_changed)
         self.connect("destroy", self.on_destroy)
+        self.connect("close-request", self.on_controller_close_request)
+        self.connect('notify::focus-widget', self.on_controller_focus_changed)
+        GLib.idle_add(self.start_controller)
+
+    def start_controller(self):
+        backend = None
+        try:
+            backend = SDLGamepad()
+            self.controller_driver = ControllerDriver(
+                backend, self.controller_context, self.dispatch_controller)
+        except Exception as error:
+            if backend:
+                backend.close()
+            print(f'Warning: Controller support disabled: {error}', file=sys.stderr)
+        return False
+
+    def on_controller_close_request(self, *_args):
+        if self.controller_driver:
+            self.controller_driver.close()
+            self.controller_driver = None
+        for record in list(reversed(self.controller_dialogs)):
+            self.close_controller_dialog(record['dialog'])
+        return False
+
+    def register_controller_dialog(self, dialog, targets):
+        record = {'dialog': dialog, 'targets': targets, 'return_focus': self.controller_window().get_focus()}
+        self.controller_dialogs.append(record)
+        dialog.connect('destroy', self.on_controller_dialog_destroy, record)
+        dialog.connect('close-request', self.on_controller_dialog_close_request, record)
+        dialog.connect('notify::focus-widget', self.on_controller_focus_changed)
+        dialog.connect('notify::is-active', self.on_controller_context_changed)
+        self.on_controller_context_changed()
+
+    def on_controller_dialog_destroy(self, _dialog, record):
+        if record not in self.controller_dialogs:
+            return
+        state = self.active_dialog_state
+        if state and state['dialog'] == record['dialog']:
+            self.on_dialog_destroy(record['dialog'], state)
+        self.controller_dialogs.remove(record)
+        self.on_controller_context_changed()
+        target = record['return_focus']
+        if target and target.get_mapped():
+            target.grab_focus()
+        self.on_controller_focus_changed()
+
+    def on_controller_dialog_close_request(self, dialog, record):
+        self.on_controller_dialog_destroy(dialog, record)
+        return False
+
+    def close_controller_dialog(self, dialog):
+        # GTK4 may defer the destroy signal while Python still holds references.
+        # Mark status requests closed before destroying the window, so a pending
+        # result cannot present a destroyed dialog again.
+        for record in list(self.controller_dialogs):
+            if record['dialog'] == dialog:
+                self.on_controller_dialog_destroy(dialog, record)
+                break
+        dialog.destroy()
+
+    def controller_window(self):
+        return self.controller_dialogs[-1]['dialog'] if self.controller_dialogs else self
+
+    def controller_context(self):
+        window = self.controller_window()
+        return window if window.get_property('is-active') else None
+
+    def on_controller_context_changed(self, *_args):
+        if self.controller_driver:
+            self.controller_driver.reset_inputs()
+
+    def controller_targets(self):
+        if self.controller_dialogs:
+            targets = self.controller_dialogs[-1]['targets']
+        else:
+            if self.content_stack.get_visible_child_name() == 'search':
+                actions = self.search_targets
+            else:
+                page = self.screen_stack.get_visible_child()
+                actions = getattr(page, 'controller_targets', [])
+            targets = actions
+        return [target for target in targets if target.get_mapped() and target.is_sensitive()]
+
+    def on_controller_focus_changed(self, *_args):
+        if self.controller_focus:
+            self.controller_focus.remove_css_class('controller-focus')
+        self.controller_focus = None
+        if not self.controller_used:
+            return
+        focused = self.controller_window().get_focus()
+        targets = self.controller_targets()
+        if not self.controller_dialogs:
+            targets = [self.search_entry, *targets]
+        for target in targets:
+            if focused == target or (focused and focused.is_ancestor(target)):
+                target.add_css_class('controller-focus')
+                self.controller_focus = target
+                break
+
+    def focus_controller_target(self, target):
+        scrolled = target.get_ancestor(Gtk.ScrolledWindow)
+        if scrolled:
+            viewport = scrolled.get_child()
+            if isinstance(viewport, Gtk.Viewport):
+                # Let GTK follow focus in its own coordinate space. Manual
+                # adjustment math against the viewport double-counts scrolling
+                # and competes with GTK's focus-scroll animation.
+                viewport.set_scroll_to_focus(True)
+        target.grab_focus()
+        self.on_controller_focus_changed()
+
+    def dispatch_controller(self, command):
+        self.controller_used = True
+        labels = self.controller_driver.backend.button_labels if self.controller_driver else None
+        self.controller_legend.set_label(controller_legend_text(labels))
+        self.controller_legend.set_visible(True)
+        search_glyph = controller_button_glyph('focus_search', labels)
+        self.search_entry.set_placeholder_text(f'{search_glyph} Search Apps and Actions')
+        self.startup_controller_glyph.set_label(controller_button_glyph('toggle_startup', labels))
+        self.startup_controller_glyph.set_visible(True)
+        window = self.controller_window()
+        if command == 'focus_search':
+            if not self.controller_dialogs:
+                self.focus_controller_target(self.search_entry)
+                GLib.idle_add(self.request_steam_keyboard)
+            return
+        if command == 'toggle_startup':
+            if not self.controller_dialogs and self.autostart_switch.is_sensitive():
+                self.autostart_switch.set_active(not self.autostart_switch.get_active())
+            return
+        if command == 'back':
+            if self.controller_dialogs:
+                self.close_controller_dialog(window)
+            elif self.search_entry.get_text():
+                self.search_entry.set_text('')
+                # SearchEntry normally delays search-changed; rebuild now.
+                self.on_search_changed(self.search_entry)
+            return
+        if command in ('previous_tab', 'next_tab'):
+            if self.controller_dialogs or self.content_stack.get_visible_child_name() == 'search':
+                return
+            pages = self.screen_stack.get_pages()
+            names = [pages.get_item(index).get_name() for index in range(pages.get_n_items())]
+            if names:
+                current = self.screen_stack.get_visible_child_name()
+                index = names.index(current) if current in names else 0
+                step = -1 if command == 'previous_tab' else 1
+                self.screen_stack.set_visible_child_name(names[(index + step) % len(names)])
+                targets = self.controller_targets()
+                if targets:
+                    self.focus_controller_target(targets[0])
+            return
+        targets = self.controller_targets()
+        if not targets:
+            return
+        focused = window.get_focus()
+        selected = next((target for target in targets
+                         if focused == target or (focused and focused.is_ancestor(target))), None)
+        if command == 'confirm':
+            if selected is None:
+                self.focus_controller_target(targets[0])
+            else:
+                self.on_controller_focus_changed()
+                selected.activate()
+            return
+        if command in ('up', 'down'):
+            if (command == 'up' and not self.controller_dialogs
+                    and (focused == self.search_entry
+                         or (focused and focused.is_ancestor(self.search_entry)))):
+                return
+            step = -1 if command == 'up' else 1
+            index = targets.index(selected) if selected else (-1 if step > 0 else len(targets))
+            index = max(0, min(len(targets) - 1, index + step))
+            self.focus_controller_target(targets[index])
+
+    def request_steam_keyboard(self):
+        """Best-effort Steam URI request after controller focus reaches search."""
+        desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+        if not ('gamescope' in desktop or os.environ.get('SteamGamepadUI') == '1'):
+            return False
+        if self.controller_dialogs or not self.search_entry.get_mapped():
+            return False
+        focus = self.get_focus()
+        if not (focus == self.search_entry or (focus and focus.is_ancestor(self.search_entry))):
+            return False
+        try:
+            subprocess.Popen(['steam', '-ifrunning', 'steam://open/keyboard'],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as error:
+            print(f'Warning: Could not request Steam keyboard: {error}', file=sys.stderr)
+        return False
 
     def on_page_changed(self, stack, _pspec):
         """Triggered to refresh actions if the visible page changes."""
@@ -254,6 +672,11 @@ class YaftiGTK(Gtk.Window):
         css = f"""
         @define-color accent {accent};
         @define-color accent_bg alpha(@accent, 0.3);
+
+        .controller-focus {{
+            outline: 3px solid @accent;
+            outline-offset: -3px;
+        }}
 
         slider,
         .slider {{
@@ -333,8 +756,11 @@ class YaftiGTK(Gtk.Window):
         page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         set_widget_margins(page_box, 10, 10, 10, 10)
 
+        scrolled.controller_targets = []
         for action in screen.get('actions', []):
-            page_box.append(self.create_action_item(action))
+            item = self.create_action_item(action)
+            page_box.append(item)
+            scrolled.controller_targets.append(item.get_child())
 
         scrolled.set_child(page_box)
         return scrolled
@@ -417,11 +843,17 @@ class YaftiGTK(Gtk.Window):
         return bool((action.get('status_script') or "").strip())
 
     def on_search_changed(self, entry):
+        previous_focus = self.controller_window().get_focus()
+        focus_in_results = previous_focus in self.search_targets
+        self.search_targets = []
         query = entry.get_text().strip()
         if not query:
             clear_container(self.search_results_box)
             self.current_search_matches = []
             self.content_stack.set_visible_child_name("tabs")
+            if focus_in_results:
+                self.search_entry.grab_focus()
+            self.on_controller_focus_changed()
             return
 
         lowered = query.lower()
@@ -442,7 +874,9 @@ class YaftiGTK(Gtk.Window):
 
         if matches:
             for action in matches:
-                self.search_results_box.append(self.create_action_item(action))
+                item = self.create_action_item(action)
+                self.search_results_box.append(item)
+                self.search_targets.append(item.get_child())
         else:
             empty = Gtk.Label(label="No matches found")
             empty.set_xalign(0)
@@ -450,6 +884,9 @@ class YaftiGTK(Gtk.Window):
 
         self.search_results_box.set_visible(True)
         self.content_stack.set_visible_child_name("search")
+        if focus_in_results:
+            (self.search_targets[0] if self.search_targets else self.search_entry).grab_focus()
+        self.on_controller_focus_changed()
         self.refresh_current_page_actions()
 
     def on_action_clicked(self, _button, action):
@@ -487,6 +924,7 @@ class YaftiGTK(Gtk.Window):
             'status_timed_out': False,
         }
         self.active_dialog_state = state
+        self.register_controller_dialog(dialog, [])
 
         dialog.connect("destroy", self.on_dialog_destroy, state)
         dialog.connect("notify::is-active", self.on_dialog_active_changed, state)
@@ -507,6 +945,7 @@ class YaftiGTK(Gtk.Window):
 
     def on_window_active_changed(self, window, _pspec):
         """Refresh the active dialog when the portal window becomes active."""
+        self.on_controller_context_changed()
         if window.get_property("is-active"):
             GLib.idle_add(self.refresh_active_dialog_if_needed)
 
@@ -563,7 +1002,7 @@ class YaftiGTK(Gtk.Window):
 
         thread = threading.Thread(
             target=self.run_status_check,
-            args=(state, request_id, status_script),
+            args=(state, request_id, status_script, background_only),
             daemon=True,
         )
         thread.start()
@@ -586,8 +1025,21 @@ class YaftiGTK(Gtk.Window):
         label = Gtk.Label(label="Loading...")
         loading_box.append(label)
 
+        close_button = Gtk.Button(label="Close")
+        close_button.connect('clicked', lambda _button: self.close_controller_dialog(dialog))
+        loading_box.append(close_button)
+        self.set_dialog_controller_targets(dialog, [close_button])
+
         dialog.set_child(loading_box)
         dialog.set_visible(True)
+        close_button.grab_focus()
+
+    def set_dialog_controller_targets(self, dialog, targets):
+        for record in self.controller_dialogs:
+            if record['dialog'] == dialog:
+                record['targets'] = targets
+                break
+        self.on_controller_context_changed()
 
     def run_status_check(self, state, request_id, status_script, background_only=False):
         """Run the modal status check in the background."""
@@ -684,6 +1136,7 @@ class YaftiGTK(Gtk.Window):
 
         actions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         active_button = None
+        option_buttons = []
         for option in self.get_action_options(action):
             option_button = Gtk.Button(label=option.get('label', 'Run'))
             option_button.set_hexpand(True)
@@ -695,18 +1148,21 @@ class YaftiGTK(Gtk.Window):
 
             option_button.connect("clicked", self.on_option_clicked, state, option)
             actions_box.append(option_button)
+            option_buttons.append((option_button, option))
 
         root.append(actions_box)
 
         close_button = Gtk.Button(label="Close")
-        close_button.connect("clicked", lambda _button: dialog.destroy())
+        close_button.connect("clicked", lambda _button: self.close_controller_dialog(dialog))
         root.append(close_button)
+        state['option_buttons'] = option_buttons
+        self.set_dialog_controller_targets(dialog, [button for button, _option in option_buttons] + [close_button])
 
         dialog.set_child(root)
         dialog.set_visible(True)
 
-        if active_button:
-            dialog.set_focus(active_button)
+        dialog.set_focus(active_button or (option_buttons[0][0] if option_buttons else close_button))
+        self.on_controller_focus_changed()
 
     def option_is_highlighted(self, option, status_token):
         """Return True when the option ID matches the current status token."""
@@ -747,6 +1203,7 @@ class YaftiGTK(Gtk.Window):
     def launch_terminal(self, script):
         """Attempt to run a command in a terminal. Returns None on success."""
         try:
+            self.on_controller_context_changed()
             process = subprocess.Popen(build_terminal_command(script))
             return process
         except FileNotFoundError:
@@ -762,7 +1219,10 @@ class YaftiGTK(Gtk.Window):
             if not self.current_page_name:
                 return
             actions = self.page_actions_map.get(self.current_page_name, [])
-        actions_to_check = [ action for action in actions if action.get('status_script') and self.action_status_widgets.get(action.get('id')).get_text() == "⏳ Checking..." ]
+        actions_to_check = [action for action in actions
+                            if action.get('status_script')
+                            and self.action_status_widgets.get(action.get('id')) is not None
+                            and self.action_status_widgets[action.get('id')].get_text() == "⏳ Checking..."]
 
         if not actions_to_check:
             return
@@ -783,6 +1243,7 @@ class YaftiGTK(Gtk.Window):
 
     def on_destroy(self, widget):
         """Let executor threads finish naturally"""
+        self.on_controller_close_request()
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
 
